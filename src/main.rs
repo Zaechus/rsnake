@@ -111,7 +111,14 @@ fn main() -> ExitCode {
 
         let snake_x = snake[0].x;
         let snake_y = snake[0].y;
-        execute!(stdout, cursor::MoveTo(snake_x, snake_y), Print('@')).unwrap();
+        execute!(
+            stdout,
+            cursor::MoveTo(apple.0, apple.1),
+            Print('a'),
+            cursor::MoveTo(snake_x, snake_y),
+            Print('@')
+        )
+        .unwrap();
 
         for snek in snake.iter_mut().skip(1) {
             if snake_x == snek.x && snake_y == snek.y {
@@ -122,9 +129,8 @@ fn main() -> ExitCode {
         if snake_x == 0 || snake_y == 0 || snake_x == WIDTH || snake_y == HEIGHT {
             break;
         } else if snake_x == apple.0 && snake_y == apple.1 {
-            snake.insert(0, Snek::new(apple.0, apple.1));
+            snake.push_front(Snek::new(apple.0, apple.1));
             apple = (rng.random_range(1..WIDTH), rng.random_range(1..HEIGHT));
-            queue!(stdout, cursor::MoveTo(apple.0, apple.1), Print('a')).unwrap();
         }
 
         while !sleeps.is_finished() {
