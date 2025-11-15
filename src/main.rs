@@ -1,4 +1,11 @@
-use std::{io::stdout, process::ExitCode, sync::mpsc, thread, time::Duration};
+use std::{
+    collections::VecDeque,
+    io::{Write, stdout},
+    process::ExitCode,
+    sync::mpsc,
+    thread,
+    time::Duration,
+};
 
 use crossterm::{
     cursor,
@@ -14,7 +21,6 @@ const WIDTH: u16 = 32;
 const HEIGHT: u16 = 16;
 const INTERVAL: u64 = 200;
 
-#[derive(Clone, Copy)]
 enum Direction {
     Left,
     Down,
@@ -64,63 +70,61 @@ fn main() -> ExitCode {
 
     let mut rng = rand::rng();
 
-    let mut snake = vec![
-        Snek::new(WIDTH / 2 + 1, HEIGHT / 2 + 1),
-        Snek::new(WIDTH / 2 + 1, HEIGHT / 2 + 2),
-        Snek::new(WIDTH / 2 + 1, HEIGHT / 2 + 3),
-    ];
+    let mut snake = VecDeque::with_capacity(3);
+    snake.push_back(Snek::new(WIDTH / 2 + 1, HEIGHT / 2 + 1));
+    snake.push_back(Snek::new(snake[0].x, snake[0].y + 1));
+    snake.push_back(Snek::new(snake[0].x, snake[0].y + 2));
     let mut direction = Direction::Up;
     let mut apple = (WIDTH / 4, HEIGHT / 4);
+
+    // print border
+    queue!(stdout, cursor::MoveTo(0, 0)).unwrap();
+    for _ in 0..=WIDTH {
+        write!(stdout, "-").unwrap();
+    }
+    queue!(stdout, cursor::MoveTo(0, 0)).unwrap();
+    for _ in 1..HEIGHT {
+        queue!(
+            stdout,
+            cursor::MoveDown(1),
+            Print("|"),
+            cursor::MoveRight(WIDTH - 1),
+            Print("|"),
+            cursor::MoveLeft(WIDTH + 1),
+        )
+        .unwrap();
+    }
+    queue!(stdout, cursor::MoveDown(1)).unwrap();
+    for _ in 0..=WIDTH {
+        write!(stdout, "-").unwrap();
+    }
+
+    for snek in snake.iter_mut().skip(1) {
+        queue!(stdout, cursor::MoveTo(snek.x, snek.y), Print('@')).unwrap();
+    }
+    queue!(stdout, cursor::MoveTo(apple.0, apple.1), Print('a')).unwrap();
 
     loop {
         let sleeps = thread::spawn(move || {
             thread::sleep(Duration::from_millis(INTERVAL));
         });
 
-        queue!(stdout, cursor::MoveTo(0, 0)).unwrap();
-        for _ in 0..=WIDTH {
-            print!("-");
-        }
-        queue!(stdout, cursor::MoveTo(0, 0)).unwrap();
-        for _ in 1..HEIGHT {
-            queue!(
-                stdout,
-                cursor::MoveDown(1),
-                terminal::Clear(terminal::ClearType::CurrentLine),
-                Print("|"),
-                cursor::MoveRight(WIDTH - 1),
-                Print("|"),
-                cursor::MoveLeft(WIDTH + 1),
-            )
-            .unwrap();
-        }
-        queue!(stdout, cursor::MoveDown(1)).unwrap();
-        for _ in 0..=WIDTH {
-            print!("-");
-        }
         let snake_x = snake[0].x;
         let snake_y = snake[0].y;
-        queue!(
-            stdout,
-            cursor::MoveTo(apple.0, apple.1),
-            Print('a'),
-            cursor::MoveTo(snake_x, snake_y),
-            Print('@')
-        )
-        .unwrap();
+        execute!(stdout, cursor::MoveTo(snake_x, snake_y), Print('@')).unwrap();
+
         for snek in snake.iter_mut().skip(1) {
-            queue!(stdout, cursor::MoveTo(snek.x, snek.y), Print('@')).unwrap();
             if snake_x == snek.x && snake_y == snek.y {
                 return quit();
             }
         }
-        execute!(stdout).unwrap();
 
-        if snake[0].x == 0 || snake[0].y == 0 || snake[0].x == WIDTH || snake[0].y == HEIGHT {
+        if snake_x == 0 || snake_y == 0 || snake_x == WIDTH || snake_y == HEIGHT {
             break;
-        } else if snake[0].x == apple.0 && snake[0].y == apple.1 {
+        } else if snake_x == apple.0 && snake_y == apple.1 {
             snake.insert(0, Snek::new(apple.0, apple.1));
             apple = (rng.random_range(1..WIDTH), rng.random_range(1..HEIGHT));
+            queue!(stdout, cursor::MoveTo(apple.0, apple.1), Print('a')).unwrap();
         }
 
         while !sleeps.is_finished() {
@@ -170,19 +174,22 @@ fn main() -> ExitCode {
         }
 
         match direction {
-            Direction::Left => snake.insert(0, Snek::new(snake[0].x - 1, snake[0].y)),
-            Direction::Down => snake.insert(0, Snek::new(snake[0].x, snake[0].y + 1)),
-            Direction::Up => snake.insert(0, Snek::new(snake[0].x, snake[0].y - 1)),
-            Direction::Right => snake.insert(0, Snek::new(snake[0].x + 1, snake[0].y)),
+            Direction::Left => snake.push_front(Snek::new(snake_x - 1, snake_y)),
+            Direction::Down => snake.push_front(Snek::new(snake_x, snake_y + 1)),
+            Direction::Up => snake.push_front(Snek::new(snake_x, snake_y - 1)),
+            Direction::Right => snake.push_front(Snek::new(snake_x + 1, snake_y)),
         }
-        snake.pop();
+        if let Some(tail) = snake.back() {
+            queue!(stdout, cursor::MoveTo(tail.x, tail.y), Print(' ')).unwrap();
+        }
+        snake.pop_back();
     }
 
     quit()
 }
 
 fn quit() -> ExitCode {
-    disable_raw_mode().unwrap();
     execute!(stdout(), cursor::MoveTo(WIDTH, HEIGHT), cursor::Show).unwrap();
+    disable_raw_mode().unwrap();
     ExitCode::SUCCESS
 }
