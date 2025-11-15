@@ -11,8 +11,8 @@ use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     execute, queue,
-    style::Print,
-    terminal::{self, disable_raw_mode, enable_raw_mode},
+    style::{Color, Print, SetForegroundColor},
+    terminal,
     tty::IsTty,
 };
 use rand::Rng;
@@ -45,7 +45,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    enable_raw_mode().unwrap();
+    terminal::enable_raw_mode().unwrap();
     queue!(
         stdout,
         cursor::Hide,
@@ -99,10 +99,10 @@ fn main() -> ExitCode {
         write!(stdout, "-").unwrap();
     }
 
+    queue!(stdout, SetForegroundColor(Color::Green)).unwrap();
     for snek in snake.iter_mut().skip(1) {
         queue!(stdout, cursor::MoveTo(snek.x, snek.y), Print('@')).unwrap();
     }
-    queue!(stdout, cursor::MoveTo(apple.0, apple.1), Print('a')).unwrap();
 
     loop {
         let sleeps = thread::spawn(move || {
@@ -114,8 +114,10 @@ fn main() -> ExitCode {
         execute!(
             stdout,
             cursor::MoveTo(apple.0, apple.1),
+            SetForegroundColor(Color::Red),
             Print('a'),
             cursor::MoveTo(snake_x, snake_y),
+            SetForegroundColor(Color::Green),
             Print('@')
         )
         .unwrap();
@@ -195,7 +197,13 @@ fn main() -> ExitCode {
 }
 
 fn quit() -> ExitCode {
-    execute!(stdout(), cursor::MoveTo(WIDTH, HEIGHT), cursor::Show).unwrap();
-    disable_raw_mode().unwrap();
+    execute!(
+        stdout(),
+        SetForegroundColor(Color::Reset),
+        cursor::MoveTo(WIDTH, HEIGHT),
+        cursor::Show
+    )
+    .unwrap();
+    terminal::disable_raw_mode().unwrap();
     ExitCode::SUCCESS
 }
