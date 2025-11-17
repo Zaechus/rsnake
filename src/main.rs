@@ -96,6 +96,9 @@ fn main() -> ExitCode {
         for snek in snake.iter_mut().skip(1) {
             if snake_x == snek.x && snake_y == snek.y {
                 return quit();
+            } else if snek.x == apple.0 && snek.y == apple.1 {
+                execute!(stdout, cursor::MoveTo(snek.x, snek.y), Print('@')).unwrap();
+                apple = (rng.random_range(1..WIDTH), rng.random_range(1..HEIGHT));
             }
         }
 
