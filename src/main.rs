@@ -51,9 +51,7 @@ fn main() -> ExitCode {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         loop {
-            if event::poll(Duration::from_millis(50)).unwrap()
-                && let Ok(ev) = event::read()
-            {
+            if let Ok(ev) = event::read() {
                 match ev {
                     Event::Key(KeyEvent {
                         kind: KeyEventKind::Press,
@@ -109,6 +107,7 @@ fn main() -> ExitCode {
         }
 
         while !sleeps.is_finished() {
+            thread::sleep(Duration::from_millis(10));
             if let Ok(ev) = rx.try_recv() {
                 match ev {
                     Event::Key(KeyEvent { code, .. }) => match code {
