@@ -8,11 +8,14 @@ use std::{
 };
 
 use crossterm::{
-    cursor,
+    cursor::{Hide, MoveDown, MoveLeft, MoveRight, MoveTo, Show},
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     execute, queue,
     style::{Color, Print, SetForegroundColor},
-    terminal,
+    terminal::{
+        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
+    },
     tty::IsTty,
 };
 use rand::Rng;
@@ -45,8 +48,8 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    terminal::enable_raw_mode().unwrap();
-    queue!(stdout, cursor::Hide).unwrap();
+    queue!(stdout, Hide, EnterAlternateScreen).unwrap();
+    enable_raw_mode().unwrap();
 
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -66,173 +69,205 @@ fn main() -> ExitCode {
 
     let mut rng = rand::rng();
 
-    let mut apple = (WIDTH / 4, HEIGHT / 4);
-    let mut direction = Direction::Up;
-    let mut snake = VecDeque::with_capacity(3);
-    snake.push_back(Snek::new(WIDTH / 2 + 1, HEIGHT / 2 + 1));
-    snake.push_back(Snek::new(snake[0].x, snake[0].y + 1));
-    snake.push_back(Snek::new(snake[0].x, snake[0].y + 2));
+    'outer: loop {
+        let mut apple = (WIDTH / 4, HEIGHT / 4);
+        let mut direction = Direction::Up;
+        let mut snake = VecDeque::with_capacity(3);
+        snake.push_back(Snek::new(WIDTH / 2 + 1, HEIGHT / 2 + 1));
+        snake.push_back(Snek::new(snake[0].x, snake[0].y + 1));
+        snake.push_back(Snek::new(snake[0].x, snake[0].y + 2));
 
-    print_all(&mut stdout, &apple, &snake);
+        print_all(&mut stdout, &apple, &snake);
 
-    loop {
-        let sleeps = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(INTERVAL));
-        });
+        'restart: loop {
+            let sleeps = thread::spawn(move || {
+                thread::sleep(Duration::from_millis(INTERVAL));
+            });
 
-        let snake_x = snake[0].x;
-        let snake_y = snake[0].y;
-        execute!(
-            stdout,
-            cursor::MoveTo(apple.0, apple.1),
-            SetForegroundColor(Color::Red),
-            Print('a'),
-            cursor::MoveTo(snake_x, snake_y),
-            SetForegroundColor(Color::Green),
-            Print('@')
-        )
-        .unwrap();
+            let snake_x = snake[0].x;
+            let snake_y = snake[0].y;
+            execute!(
+                stdout,
+                MoveTo(apple.0, apple.1),
+                SetForegroundColor(Color::Red),
+                Print('a'),
+                MoveTo(snake_x, snake_y),
+                SetForegroundColor(Color::Green),
+                Print('@')
+            )
+            .unwrap();
 
-        for snek in snake.iter_mut().skip(1) {
-            if snake_x == snek.x && snake_y == snek.y {
-                return quit();
-            } else if snek.x == apple.0 && snek.y == apple.1 {
-                execute!(stdout, cursor::MoveTo(snek.x, snek.y), Print('@')).unwrap();
+            let mut crashed = false;
+            for snek in snake.iter_mut().skip(1) {
+                if snake_x == snek.x && snake_y == snek.y {
+                    crashed = true;
+                    break;
+                } else if snek.x == apple.0 && snek.y == apple.1 {
+                    execute!(stdout, MoveTo(snek.x, snek.y), Print('@')).unwrap();
+                    apple = (rng.random_range(1..WIDTH), rng.random_range(1..HEIGHT));
+                }
+            }
+
+            if snake_x == 0 || snake_y == 0 || snake_x == WIDTH || snake_y == HEIGHT {
+                crashed = true;
+            } else if snake_x == apple.0 && snake_y == apple.1 {
+                snake.push_front(Snek::new(apple.0, apple.1));
                 apple = (rng.random_range(1..WIDTH), rng.random_range(1..HEIGHT));
             }
-        }
 
-        if snake_x == 0 || snake_y == 0 || snake_x == WIDTH || snake_y == HEIGHT {
-            break;
-        } else if snake_x == apple.0 && snake_y == apple.1 {
-            snake.push_front(Snek::new(apple.0, apple.1));
-            apple = (rng.random_range(1..WIDTH), rng.random_range(1..HEIGHT));
-        }
+            if crashed {
+                execute!(
+                    stdout,
+                    MoveTo(snake[0].x, snake[0].y),
+                    SetForegroundColor(Color::Red),
+                    Print('@')
+                )
+                .unwrap();
+                loop {
+                    if let Ok(ev) = rx.recv() {
+                        match ev {
+                            Event::Key(KeyEvent { code, .. }) => match code {
+                                KeyCode::Char(' ') | KeyCode::Enter => {
+                                    break 'restart;
+                                }
+                                KeyCode::Char('q') => break 'outer,
+                                _ => (),
+                            },
+                            Event::Resize(_, _) => print_all(&mut stdout, &apple, &snake),
+                            _ => (),
+                        }
+                    }
+                }
+            }
 
-        while !sleeps.is_finished() {
-            thread::sleep(Duration::from_millis(10));
-            if let Ok(ev) = rx.try_recv() {
-                match ev {
-                    Event::Key(KeyEvent { code, .. }) => match code {
-                        KeyCode::Char('h') | KeyCode::Char('a') | KeyCode::Left => {
-                            match direction {
-                                Direction::Down | Direction::Up => {
-                                    direction = Direction::Left;
-                                    break;
-                                }
-                                _ => (),
-                            }
-                        }
-                        KeyCode::Char('j') | KeyCode::Char('s') | KeyCode::Down => {
-                            match direction {
-                                Direction::Left | Direction::Right => {
-                                    direction = Direction::Down;
-                                    break;
-                                }
-                                _ => (),
-                            }
-                        }
-                        KeyCode::Char('k') | KeyCode::Char('w') | KeyCode::Up => match direction {
-                            Direction::Left | Direction::Right => {
-                                direction = Direction::Up;
-                                break;
-                            }
-                            _ => (),
-                        },
-                        KeyCode::Char('l') | KeyCode::Char('d') | KeyCode::Right => match direction
-                        {
-                            Direction::Down | Direction::Up => {
-                                direction = Direction::Right;
-                                break;
-                            }
-                            _ => (),
-                        },
-                        KeyCode::Char('p') | KeyCode::Char(' ') | KeyCode::Esc => loop {
-                            if let Ok(ev) = rx.recv() {
-                                match ev {
-                                    Event::Key(KeyEvent { code, .. }) => match code {
-                                        KeyCode::Char('p') | KeyCode::Char(' ') | KeyCode::Esc => {
-                                            break;
-                                        }
-                                        KeyCode::Char('q') => return quit(),
-                                        _ => (),
-                                    },
-                                    Event::Resize(_, _) => print_all(&mut stdout, &apple, &snake),
+            while !sleeps.is_finished() {
+                thread::sleep(Duration::from_millis(10));
+                if let Ok(ev) = rx.try_recv() {
+                    match ev {
+                        Event::Key(KeyEvent { code, .. }) => match code {
+                            KeyCode::Char('h') | KeyCode::Char('a') | KeyCode::Left => {
+                                match direction {
+                                    Direction::Down | Direction::Up => {
+                                        direction = Direction::Left;
+                                        break;
+                                    }
                                     _ => (),
                                 }
                             }
+                            KeyCode::Char('j') | KeyCode::Char('s') | KeyCode::Down => {
+                                match direction {
+                                    Direction::Left | Direction::Right => {
+                                        direction = Direction::Down;
+                                        break;
+                                    }
+                                    _ => (),
+                                }
+                            }
+                            KeyCode::Char('k') | KeyCode::Char('w') | KeyCode::Up => {
+                                match direction {
+                                    Direction::Left | Direction::Right => {
+                                        direction = Direction::Up;
+                                        break;
+                                    }
+                                    _ => (),
+                                }
+                            }
+                            KeyCode::Char('l') | KeyCode::Char('d') | KeyCode::Right => {
+                                match direction {
+                                    Direction::Down | Direction::Up => {
+                                        direction = Direction::Right;
+                                        break;
+                                    }
+                                    _ => (),
+                                }
+                            }
+                            KeyCode::Char('p') | KeyCode::Char(' ') | KeyCode::Esc => loop {
+                                if let Ok(ev) = rx.recv() {
+                                    match ev {
+                                        Event::Key(KeyEvent { code, .. }) => match code {
+                                            KeyCode::Char('p')
+                                            | KeyCode::Char(' ')
+                                            | KeyCode::Esc => {
+                                                break;
+                                            }
+                                            KeyCode::Char('q') => break 'outer,
+                                            _ => (),
+                                        },
+                                        Event::Resize(_, _) => {
+                                            print_all(&mut stdout, &apple, &snake)
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                            },
+                            KeyCode::Char('q') => break 'outer,
+                            _ => (),
                         },
-                        KeyCode::Char('q') => return quit(),
+                        Event::Resize(_, _) => print_all(&mut stdout, &apple, &snake),
                         _ => (),
-                    },
-                    Event::Resize(_, _) => print_all(&mut stdout, &apple, &snake),
-                    _ => (),
+                    }
                 }
             }
-        }
 
-        match direction {
-            Direction::Left => snake.push_front(Snek::new(snake_x - 1, snake_y)),
-            Direction::Down => snake.push_front(Snek::new(snake_x, snake_y + 1)),
-            Direction::Up => snake.push_front(Snek::new(snake_x, snake_y - 1)),
-            Direction::Right => snake.push_front(Snek::new(snake_x + 1, snake_y)),
+            match direction {
+                Direction::Left => snake.push_front(Snek::new(snake_x - 1, snake_y)),
+                Direction::Down => snake.push_front(Snek::new(snake_x, snake_y + 1)),
+                Direction::Up => snake.push_front(Snek::new(snake_x, snake_y - 1)),
+                Direction::Right => snake.push_front(Snek::new(snake_x + 1, snake_y)),
+            }
+            if let Some(tail) = snake.back() {
+                queue!(stdout, MoveTo(tail.x, tail.y), Print(' ')).unwrap();
+            }
+            snake.pop_back();
         }
-        if let Some(tail) = snake.back() {
-            queue!(stdout, cursor::MoveTo(tail.x, tail.y), Print(' ')).unwrap();
-        }
-        snake.pop_back();
     }
 
-    quit()
-}
-
-fn quit() -> ExitCode {
+    disable_raw_mode().unwrap();
     execute!(
-        stdout(),
+        stdout,
         SetForegroundColor(Color::Reset),
-        cursor::MoveTo(WIDTH, HEIGHT),
-        cursor::Show
+        LeaveAlternateScreen,
+        Show
     )
     .unwrap();
-    terminal::disable_raw_mode().unwrap();
     ExitCode::SUCCESS
 }
 
 fn print_all(stdout: &mut Stdout, apple: &(u16, u16), snake: &VecDeque<Snek>) {
     queue!(
         stdout,
-        terminal::Clear(terminal::ClearType::All),
-        cursor::MoveTo(0, 0),
+        MoveTo(0, 0),
+        Clear(ClearType::All),
         SetForegroundColor(Color::Reset)
     )
     .unwrap();
     for _ in 0..=WIDTH {
         write!(stdout, "-").unwrap();
     }
-    queue!(stdout, cursor::MoveTo(0, 0)).unwrap();
+    queue!(stdout, MoveLeft(WIDTH + 1)).unwrap();
     for _ in 1..HEIGHT {
         queue!(
             stdout,
-            cursor::MoveDown(1),
+            MoveDown(1),
             Print("|"),
-            cursor::MoveRight(WIDTH - 1),
+            MoveRight(WIDTH - 1),
             Print("|"),
-            cursor::MoveLeft(WIDTH + 1),
+            MoveLeft(WIDTH + 1),
         )
         .unwrap();
     }
-    queue!(stdout, cursor::MoveDown(1)).unwrap();
+    queue!(stdout, MoveDown(1)).unwrap();
     for _ in 0..=WIDTH {
         write!(stdout, "-").unwrap();
     }
 
     queue!(stdout, SetForegroundColor(Color::Green)).unwrap();
     for snek in snake.iter() {
-        queue!(stdout, cursor::MoveTo(snek.x, snek.y), Print('@')).unwrap();
+        queue!(stdout, MoveTo(snek.x, snek.y), Print('@')).unwrap();
     }
     execute!(
         stdout,
-        cursor::MoveTo(apple.0, apple.1),
+        MoveTo(apple.0, apple.1),
         SetForegroundColor(Color::Red),
         Print('a'),
     )
